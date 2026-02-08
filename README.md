@@ -1,7 +1,7 @@
 # Kate can be used as a full fledged IDE for C (and C++).
 Note: I use clang as my compiler. 
 
-You can of use existing plugins for your compilation but then you have limited control over what happens. To address that I've developed a intelligent makefile generator that:
+You can use existing plugins for your compilation but then you have limited control over what happens. To address that I've developed a intelligent makefile generator that:
 - discovers all included headers, indepent of location, autonomously.
 - can build 3 targets: normal, debug and release (optimised binary) depending on invocation (see shortcuts).
 - cleans up afterwards
