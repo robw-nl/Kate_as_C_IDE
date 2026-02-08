@@ -8,7 +8,7 @@ You can use existing plugins for your compilation but then you have limited cont
 - reports progress and results in the kate output pane
 
 # Makefile generator
-Intelligent bash script to create a C makefile that supports 3 build targets (debug, regular, release) where the release build delivers a highly optimised binary.
+Intelligent bash script to create a C makefile that supports 3 build targets (debug, regular, release) where the release build delivers a highly optimised binary. copy the script in your C project folder and run the script (don't forget to set the execute permission. A makefile will be generated. Tested and approved (by me) on 10 different C projects, small and large.
 
 # Kate configuration
 Kate can execute external programs and commands. We use this to configure each build command and save it so we can assign a shortcut to each one.
