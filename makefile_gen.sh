@@ -1,33 +1,42 @@
 #!/bin/bash
-PROJECT_NAME=${1:-$(basename "$PWD")}
+# makefile_gen.sh
 
-# --- UNIVERSAL DYNAMIC DISCOVERY (Enhanced for Folders) ---
+# Ensure we use the correct pkg-config (overridden by build_win.sh)
+PKG_CONFIG=${PKG_CONFIG:-pkg-config}
+
+# Evaluate the project name once (grabs parent folder)
+PROJECT_NAME=$(basename "$(dirname "$PWD")")
+
+# --- UNIVERSAL DYNAMIC DISCOVERY ---
+declare -A LIB_MAP=( ["sdl_mixer"]="SDL2_mixer" ["sdl_image"]="SDL2_image" ["sdl_ttf"]="SDL2_ttf" ["sdl"]="sdl2" ["asoundlib"]="alsa" )
+
+# Scans source files to automatically link required libraries (SDL2, ALSA, Math, etc.)
 RAW_INCLUDES=$(grep -h "#include" *.c 2>/dev/null | tr -d '\r' | awk -F'[<">]' '{print $2}' | sed 's/\.h//g')
-
 LDLIBS_AUTO=""
-
 for entry in $RAW_INCLUDES; do
-    lib=$(echo "$entry" | cut -d'/' -f1)
+    header=$(basename "$entry")
+    lib_key=$(echo "$header" | tr '[:upper:]' '[:lower:]')
+    lib=${LIB_MAP[$lib_key]:-$lib_key}
     echo "🔎 Checking: $lib"
-
-    if pkg-config --exists "$lib" 2>/dev/null; then
-        LDLIBS_AUTO="$LDLIBS_AUTO $(pkg-config --libs "$lib")"
-    elif [[ "$lib" == "alsa" ]]; then
-        echo "   -> Mapping alsa to -lasound"
-        LDLIBS_AUTO="$LDLIBS_AUTO -lasound"
-    elif [[ "$lib" == "raylib" ]]; then
-        LDLIBS_AUTO="$LDLIBS_AUTO -lraylib -lGL -lm -lpthread -ldl -lrt -lX11"
+    if $PKG_CONFIG --exists "$lib" 2>/dev/null; then
+        LDLIBS_AUTO="$LDLIBS_AUTO $($PKG_CONFIG --libs "$lib")"
     fi
 done
 
 grep -qi "math.h" *.c 2>/dev/null && LDLIBS_AUTO="$LDLIBS_AUTO -lm"
-LDLIBS_STR=$(echo "$LDLIBS_AUTO" | xargs -n1 | sort -u | xargs)
+
+# Remove duplicates and sort the libraries
+LDLIBS_STR=$(echo "$LDLIBS_AUTO" | xargs -n1 | awk '!x[$0]++' | tr '\n' ' ')
 
 # --- GENERATE MAKEFILE ---
 cat <<EOF > makefile
-CC = clang
+# Use ?= to allow environment overrides for cross-compilation
+CC ?= clang
+PKG_CONFIG ?= pkg-config
 BASE_FLAGS = -Wall -Wextra -MMD -MP
-TARGET = $PROJECT_NAME
+
+# Project-specific variables (evaluated at generation time)
+TARGET ?= $PROJECT_NAME
 DEBUG_TARGET = \$(TARGET)_debug
 RELEASE_TARGET = \$(TARGET)_release
 LDLIBS = $LDLIBS_STR
@@ -41,12 +50,12 @@ DEPS = \$(SRCS:.c=.d)
 all: CFLAGS = \$(BASE_FLAGS) -O2
 all: clean_objs \$(TARGET)
 
-# DEBUG TARGET: Debug Binary
-debug: CFLAGS = \$(BASE_FLAGS) -g -O0
+# DEBUG TARGET
+debug: CFLAGS = \$(BASE_FLAGS) -g -O0 -DDEBUG_MODE
 debug: clean_objs \$(DEBUG_TARGET)
 
-# RELEASE TARGET: Lean and Mean
-release: CFLAGS = \$(BASE_FLAGS) -O3 -march=native -flto
+# RELEASE TARGET (Entry Point)
+release: CFLAGS = \$(BASE_FLAGS) -O3 -march=x86-64 -mtune=generic -mno-avx512f
 release: LDFLAGS = -s
 release: clean_objs \$(RELEASE_TARGET)
 
@@ -54,36 +63,43 @@ release: clean_objs \$(RELEASE_TARGET)
 \$(TARGET): \$(OBJS)
 	\$(CC) \$(CFLAGS) \$(OBJS) -o \$(TARGET) \$(LDLIBS)
 	@rm -f \$(OBJS) \$(DEPS)
-	@echo "--- Standard Build Successful: '\$(TARGET)' preserved ---"
+	@echo "--- Standard Build Successful ---"
 
 # Rule for Debug Binary
 \$(DEBUG_TARGET): \$(OBJS)
 	\$(CC) \$(CFLAGS) \$(OBJS) -o \$(DEBUG_TARGET) \$(LDLIBS)
 	@rm -f \$(OBJS) \$(DEPS)
-	@echo "--- Debug Build Successful: '\$(DEBUG_TARGET)' preserved ---"
+	@echo "--- Debug Build Successful ---"
 
-# Rule for Release Binary
+# Rule for Release Binary (With Advanced ISA Metadata Removal)
 \$(RELEASE_TARGET): \$(OBJS)
 	\$(CC) \$(CFLAGS) \$(LDFLAGS) \$(OBJS) -o \$(RELEASE_TARGET) \$(LDLIBS)
+	@if command -v objcopy >/dev/null 2>&1; then \\
+		echo "Nuking ISA metadata via objcopy..."; \\
+		objcopy --remove-section=.note.gnu.property \$(RELEASE_TARGET); \\
+	fi
+	@if [ "\$(CC)" = "clang" ] || [ "\$(CC)" = "gcc" ]; then \\
+		echo "Applying stealth strip..."; \\
+		strip \$(RELEASE_TARGET) 2>/dev/null || true; \\
+	fi
 	@rm -f \$(OBJS) \$(DEPS)
-	@echo "--- Release Build Successful: '\$(RELEASE_TARGET)' is lean and mean ---"
+	@echo "--- Release Build Successful: '\$(RELEASE_TARGET)' is ready ---"
 
 -include \$(DEPS)
 
 %.o: %.c
-	\$(CC) \$(CFLAGS) -c $< -o \$@
+	\$(CC) \$(CFLAGS) -c \$< -o \$@
 
 # CLEANUP
 clean:
 	rm -f \$(TARGET) \$(DEBUG_TARGET) \$(RELEASE_TARGET) \$(OBJS) \$(DEPS)
-
 clean_objs:
 	@rm -f \$(OBJS) \$(DEPS)
 
-rebuild: clean all
-
-.PHONY: all clean rebuild debug release clean_objs
+check:
+	@echo "--- Running Static Analysis ---"
+	cppcheck --enable=all --suppress=missingIncludeSystem --inconclusive --library=sdl2 ./
+.PHONY: all clean rebuild debug release clean_objs check
 EOF
 
-echo "✅ Smart Makefile generated for $PROJECT_NAME"
-echo "👉 Linker Flags: $LDLIBS_STR"
+echo "Smart Makefile generated for $PROJECT_NAME"
